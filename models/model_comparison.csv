@@ -1,0 +1,8 @@
+,Test Accuracy,Macro F1,CV F1 Mean,CV F1 Std
+Logistic Regression,0.5931,0.5976,0.5913,0.0261
+Decision Tree,0.5517,0.551,0.5831,0.0073
+Random Forest,0.6621,0.6515,0.6773,0.0299
+Gradient Boosting,0.6828,0.669,0.6651,0.0215
+MLP,0.5276,0.3764,0.5547,0.0387
+SVM (RBF),0.6345,0.6339,0.6202,0.0163
+K-Nearest Neighbors,0.4966,0.4219,0.4569,0.0247
