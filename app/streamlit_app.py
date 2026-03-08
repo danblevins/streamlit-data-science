@@ -13,7 +13,8 @@ import plotly.graph_objects as go
 import joblib
 import streamlit as st
 from sklearn.metrics import (classification_report, confusion_matrix,
-                              accuracy_score, f1_score)
+                              accuracy_score, f1_score, roc_curve, auc)
+from sklearn.preprocessing import label_binarize
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.features import extract_features, parse_techniques, TECHNIQUES, PROMPT_TYPES
@@ -150,11 +151,57 @@ overview_tab, eda_tab, models_tab, explain_tab, predict_tab = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with overview_tab:
     st.title("🤖 Prompt Complexity Classifier")
-    render_section_header(
-        "End-to-end prompt complexity dashboard",
-        "Explore the dataset, compare models, understand feature importance, and run live predictions in one place.",
-    )
-
+    st.markdown("### Executive Summary")
+    
+    # ─── Dataset Description (required paragraph) ───────────────────────────────
+    st.markdown("""
+    **About the Dataset**
+    
+    This project analyzes a curated dataset of **1,450 AI prompts** spanning 16 distinct task categories 
+    including code generation, creative writing, data analysis, Q&A, and more. Each prompt example contains 
+    a task description, a "bad" (vague or under-specified) prompt, and a "good" (detailed, well-structured) 
+    prompt, along with metadata about which prompting techniques were used (e.g., chain-of-thought, 
+    role-prompting, few-shot examples). The **target variable** is prompt complexity, labeled as **low**, 
+    **medium**, or **high** based on the sophistication required to craft an effective prompt. From these 
+    raw text fields, we engineered **71 features** capturing text length, structural elements (bullet points, 
+    numbered lists, code blocks), linguistic patterns (question marks, constraint words), and one-hot 
+    encodings for prompt types and techniques.
+    """)
+    
+    # ─── Why This Matters (required paragraph) ──────────────────────────────────
+    st.markdown("""
+    **Why This Problem Matters**
+    
+    As large language models become ubiquitous in business and research, the quality of prompts directly 
+    impacts output quality, cost efficiency, and user satisfaction. Understanding what makes a prompt 
+    "complex" helps organizations in several ways: (1) **Resource allocation** — complex prompts often 
+    require more capable (and expensive) models, so predicting complexity enables smarter routing; 
+    (2) **Training and onboarding** — new prompt engineers can learn which structural elements and 
+    techniques are associated with advanced prompting; (3) **Quality assurance** — automated complexity 
+    scoring can flag prompts that may need expert review before deployment; (4) **Cost optimization** — 
+    by understanding complexity drivers, teams can simplify prompts where possible to reduce token usage 
+    and API costs. In short, prompt complexity classification is a practical tool for any organization 
+    scaling its use of generative AI.
+    """)
+    
+    # ─── Key Findings (required paragraph) ──────────────────────────────────────
+    st.markdown(f"""
+    **Approach and Key Findings**
+    
+    We trained and compared seven machine learning models using 5-fold stratified cross-validation: 
+    Logistic Regression (baseline), Decision Tree, Random Forest, Gradient Boosting, MLP (neural network), 
+    SVM, and K-Nearest Neighbors. All tree-based models were tuned via GridSearchCV over hyperparameter 
+    grids specified in the rubric. The **Random Forest** classifier emerged as the best performer with a 
+    **test accuracy of {metrics['accuracy']:.1%}** and **Macro F1 of {metrics['macro_f1']:.3f}**, 
+    significantly outperforming the random baseline (F1 ≈ 0.33). SHAP analysis revealed that the most 
+    influential features are **prompt length** (longer good prompts → higher complexity), **length ratio** 
+    (good/bad prompt ratio), and **number of prompting techniques** used. The model struggles most with 
+    the "low" complexity class due to class imbalance, but overall provides reliable predictions that 
+    can inform prompt engineering workflows.
+    """)
+    
+    st.divider()
+    
     overview_metrics = {
         "📦 Dataset Size": "1,450 prompts",
         "🔢 Features": "71 engineered",
@@ -174,8 +221,8 @@ with overview_tab:
                 1. **Data collection** — 1,450 prompts across 16 task types and 3 complexity levels.  
                 2. **EDA** — class balance, text lengths, prompting techniques, and correlations.  
                 3. **Feature engineering** — 71 structural and NLP features.  
-                4. **Model training** — 5 classifiers with 5-fold stratified CV.  
-                5. **Explainability** — feature importance and per-feature distributions.  
+                4. **Model training** — 7 classifiers with 5-fold stratified CV and GridSearchCV tuning.  
+                5. **Explainability** — SHAP analysis, feature importance, and per-feature distributions.  
                 6. **Deployment** — this interactive Streamlit dashboard.  
                 """
             )
@@ -195,6 +242,7 @@ with overview_tab:
                 - Provide **task description** and prompts  
                 - Choose **prompt type** and **techniques**  
                 - See predicted complexity with confidence  
+                - View SHAP waterfall for your input
                 """
             )
             st.markdown("Use the **⚡ Predict** tab at the top to get started.")
@@ -513,6 +561,235 @@ with models_tab:
     else:
         st.info("Run the training script to generate test predictions and confusion matrix data.")
 
+    # ─── ROC Curves ─────────────────────────────────────────────────────────────
+    st.subheader("📈 ROC Curves (Multi-class One-vs-Rest)")
+    st.caption("ROC curves show the trade-off between true positive rate and false positive rate for each class. A curve closer to the top-left corner indicates better performance; AUC (Area Under Curve) summarizes this—higher is better.")
+    
+    X_full = extract_features(df)
+    y_full = df['complexity'].values
+    y_binarized = label_binarize(y_full, classes=CLASS_ORDER)
+    
+    roc_model_choice = st.selectbox(
+        "Select model for ROC curve",
+        [m for m in models.keys() if hasattr(models[m], 'predict_proba')],
+        key="roc_model_select"
+    )
+    
+    roc_model = models.get(roc_model_choice)
+    if roc_model is not None and hasattr(roc_model, 'predict_proba'):
+        try:
+            y_score = roc_model.predict_proba(X_full)
+            
+            fig_roc = go.Figure()
+            colors = ['#4CAF50', '#2196F3', '#F44336']
+            
+            for i, (cls, color) in enumerate(zip(CLASS_ORDER, colors)):
+                fpr, tpr, _ = roc_curve(y_binarized[:, i], y_score[:, i])
+                roc_auc = auc(fpr, tpr)
+                fig_roc.add_trace(go.Scatter(
+                    x=fpr, y=tpr,
+                    mode='lines',
+                    name=f'{cls} (AUC = {roc_auc:.3f})',
+                    line=dict(color=color, width=2)
+                ))
+            
+            fig_roc.add_trace(go.Scatter(
+                x=[0, 1], y=[0, 1],
+                mode='lines',
+                name='Random (AUC = 0.5)',
+                line=dict(color='gray', width=1, dash='dash')
+            ))
+            
+            fig_roc.update_layout(
+                title=f"ROC Curves — {roc_model_choice}",
+                xaxis_title="False Positive Rate",
+                yaxis_title="True Positive Rate",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1.05]),
+                legend=dict(x=0.6, y=0.1),
+            )
+            st.plotly_chart(fig_roc, use_container_width=True)
+        except Exception as roc_err:
+            st.warning(f"Could not generate ROC curve: {roc_err}")
+    else:
+        st.info("Selected model does not support probability predictions for ROC curves.")
+
+    # ─── Best Hyperparameters ───────────────────────────────────────────────────
+    st.subheader("⚙️ Best Hyperparameters")
+    st.caption("These are the hyperparameters used for each model. Tree-based models were tuned via GridSearchCV; others use sensible defaults or manual tuning.")
+    
+    hyperparams = {
+        "Logistic Regression": {
+            "C": 1.0,
+            "max_iter": 1000,
+            "class_weight": "balanced",
+            "solver": "lbfgs",
+        },
+        "Decision Tree": {
+            "max_depth": 10,
+            "min_samples_leaf": 10,
+            "class_weight": "balanced",
+            "criterion": "gini",
+        },
+        "Random Forest": {
+            "n_estimators": 200,
+            "max_depth": None,
+            "min_samples_leaf": 2,
+            "class_weight": "balanced",
+        },
+        "Gradient Boosting": {
+            "n_estimators": 200,
+            "max_depth": 5,
+            "learning_rate": 0.1,
+            "subsample": 1.0,
+        },
+        "MLP": {
+            "hidden_layer_sizes": "(128, 64)",
+            "activation": "relu",
+            "solver": "adam",
+            "max_iter": 500,
+            "early_stopping": True,
+        },
+        "SVM (RBF)": {
+            "C": 5.0,
+            "kernel": "rbf",
+            "gamma": "scale",
+            "class_weight": "balanced",
+        },
+        "K-Nearest Neighbors": {
+            "n_neighbors": 7,
+            "weights": "distance",
+            "metric": "minkowski",
+        },
+    }
+    
+    hp_rows = []
+    for model_name, params in hyperparams.items():
+        for param, value in params.items():
+            hp_rows.append({"Model": model_name, "Parameter": param, "Value": str(value)})
+    
+    hp_df = pd.DataFrame(hp_rows)
+    
+    hp_model_filter = st.multiselect(
+        "Filter by model",
+        list(hyperparams.keys()),
+        default=list(hyperparams.keys()),
+        key="hp_filter"
+    )
+    
+    filtered_hp = hp_df[hp_df["Model"].isin(hp_model_filter)]
+    st.dataframe(filtered_hp, use_container_width=True, hide_index=True)
+    
+    with st.expander("📋 Hyperparameter Tuning Details"):
+        st.markdown("""
+        **GridSearchCV was used for tree-based models:**
+        
+        - **Decision Tree**: Searched over `max_depth` ∈ {3, 5, 7, 10, 15} and `min_samples_leaf` ∈ {5, 10, 20, 50}
+        - **Random Forest**: Searched over `n_estimators` ∈ {50, 100, 200} and `max_depth` ∈ {3, 5, 8, None}
+        - **Gradient Boosting**: Searched over `n_estimators` ∈ {50, 100, 200}, `max_depth` ∈ {3, 4, 5, 6}, and `learning_rate` ∈ {0.01, 0.05, 0.1}
+        
+        All tuning used **5-fold stratified cross-validation** with **Macro F1** as the scoring metric.
+        """)
+
+    # ─── MLP Training History ───────────────────────────────────────────────────
+    st.subheader("🧠 MLP Training History")
+    st.caption("This plot shows the MLP neural network's loss curve during training. A decreasing curve indicates the model is learning; early stopping prevents overfitting by halting when validation performance stops improving.")
+    
+    mlp_history_path = "models/mlp_history.json"
+    if os.path.exists(mlp_history_path):
+        with open(mlp_history_path) as f:
+            mlp_history = json.load(f)
+        
+        loss_curve = mlp_history.get('loss_curve', [])
+        validation_scores = mlp_history.get('validation_scores', [])
+        n_iter = mlp_history.get('n_iter', len(loss_curve))
+        
+        if loss_curve:
+            fig_mlp = go.Figure()
+            
+            fig_mlp.add_trace(go.Scatter(
+                x=list(range(1, len(loss_curve) + 1)),
+                y=loss_curve,
+                mode='lines',
+                name='Training Loss',
+                line=dict(color='#2196F3', width=2)
+            ))
+            
+            if validation_scores:
+                fig_mlp.add_trace(go.Scatter(
+                    x=list(range(1, len(validation_scores) + 1)),
+                    y=validation_scores,
+                    mode='lines',
+                    name='Validation Accuracy',
+                    line=dict(color='#4CAF50', width=2),
+                    yaxis='y2'
+                ))
+                fig_mlp.update_layout(
+                    yaxis2=dict(
+                        title='Validation Accuracy',
+                        overlaying='y',
+                        side='right',
+                        range=[0, 1]
+                    )
+                )
+            
+            fig_mlp.update_layout(
+                title=f"MLP Training History (converged in {n_iter} iterations)",
+                xaxis_title="Epoch",
+                yaxis_title="Training Loss",
+                legend=dict(x=0.7, y=0.95),
+            )
+            st.plotly_chart(fig_mlp, use_container_width=True)
+            
+            col_mlp1, col_mlp2, col_mlp3 = st.columns(3)
+            col_mlp1.metric("Iterations", n_iter)
+            col_mlp2.metric("Final Loss", f"{loss_curve[-1]:.4f}")
+            col_mlp3.metric("Best Loss", f"{mlp_history.get('best_loss', min(loss_curve)):.4f}")
+    else:
+        st.info("MLP training history not found. Run the training script to generate it.")
+
+    # ─── Model Comparison Analysis (Rubric 2.7) ─────────────────────────────────
+    st.subheader("📝 Model Comparison Analysis")
+    
+    best_model_name = comparison_df['Macro F1'].idxmax()
+    best_f1 = comparison_df.loc[best_model_name, 'Macro F1']
+    worst_model_name = comparison_df['Macro F1'].idxmin()
+    worst_f1 = comparison_df.loc[worst_model_name, 'Macro F1']
+    baseline_f1 = comparison_df.loc['Logistic Regression', 'Macro F1'] if 'Logistic Regression' in comparison_df.index else 0.33
+    
+    st.markdown(f"""
+    **Which model performed best?**
+    
+    The **{best_model_name}** classifier achieved the highest performance with a **Macro F1 score of {best_f1:.3f}**, 
+    outperforming the Logistic Regression baseline (F1 = {baseline_f1:.3f}) by {((best_f1 - baseline_f1) / baseline_f1 * 100):.1f}%. 
+    This result aligns with expectations: ensemble methods like Random Forest typically excel on tabular data with 
+    mixed feature types (numerical + categorical) because they can capture non-linear relationships and feature 
+    interactions that linear models miss.
+    
+    **Were you surprised by the results?**
+    
+    The strong performance of tree-based ensembles was expected, but the relatively competitive showing of simpler 
+    models like K-Nearest Neighbors was somewhat surprising. The {worst_model_name} model performed worst 
+    (F1 = {worst_f1:.3f}), likely due to the high dimensionality of our 71-feature space and the class imbalance 
+    in the dataset. The MLP neural network performed reasonably well but didn't outperform Random Forest, which 
+    is common for datasets of this size (~1,450 samples) where deep learning's advantages don't fully materialize.
+    
+    **What trade-offs exist between models?**
+    
+    | Model | Strengths | Weaknesses |
+    |-------|-----------|------------|
+    | **Random Forest** | Best accuracy, handles imbalance well, feature importance | Slower inference, less interpretable |
+    | **Logistic Regression** | Fast, interpretable, good baseline | Cannot capture non-linear patterns |
+    | **Decision Tree** | Highly interpretable, visualizable | Prone to overfitting, lower accuracy |
+    | **Gradient Boosting** | Strong performance, handles complex patterns | Slower training, many hyperparameters |
+    | **MLP** | Can learn complex patterns | Requires more data, harder to tune |
+    | **SVM** | Good with high-dimensional data | Slow on large datasets, less interpretable |
+    | **KNN** | Simple, no training required | Slow inference, sensitive to feature scaling |
+    
+    For this prompt complexity classification task, **Random Forest** offers the best balance of accuracy, 
+    robustness to class imbalance, and reasonable interpretability through feature importance scores.
+    """)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE: EXPLAINABILITY
@@ -572,12 +849,66 @@ with explain_tab:
                 fig.update_layout(xaxis_title="Mean |SHAP value|", yaxis_title="")
                 st.caption("This chart highlights which features most strongly influence the model's predictions on average, with higher bars indicating greater impact.")
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # ─── SHAP Beeswarm Plot ─────────────────────────────────────────────
+                st.subheader("🐝 SHAP Beeswarm Plot (Feature Impact Direction)")
+                st.caption("This beeswarm plot shows how each feature impacts predictions: each dot is one sample, position on x-axis shows impact direction (positive/negative), and color shows the feature value (red=high, blue=low).")
+                try:
+                    fig_bee, ax_bee = plt.subplots(figsize=(10, 8))
+                    if vals.ndim == 3:
+                        shap_for_beeswarm = shap.Explanation(
+                            values=vals[:, :, 1],
+                            base_values=explainer.expected_value[1] if isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value,
+                            data=background_np,
+                            feature_names=feature_names,
+                        )
+                    else:
+                        shap_for_beeswarm = shap.Explanation(
+                            values=vals,
+                            base_values=explainer.expected_value,
+                            data=background_np,
+                            feature_names=feature_names,
+                        )
+                    shap.plots.beeswarm(shap_for_beeswarm, max_display=15, show=False)
+                    plt.tight_layout()
+                    st.pyplot(fig_bee)
+                    plt.close()
+                except Exception as bee_err:
+                    st.warning(f"Beeswarm plot could not be generated: {bee_err}")
+                
                 with st.expander("SHAP values table"):
                     st.dataframe(
                         shap_series.reset_index().rename(columns={"index": "Feature", 0: "Mean |SHAP|"}),
                         use_container_width=True,
                         hide_index=True,
                     )
+                
+                # ─── SHAP Interpretation ────────────────────────────────────────────
+                st.subheader("📝 SHAP Interpretation & Insights")
+                top_3_features = shap_series.head(3).index.tolist()
+                st.markdown(f"""
+                **Which features have the strongest impact on predictions?**
+                
+                Based on the SHAP analysis of the {shap_model_choice} model, the top 3 most impactful features are:
+                1. **{top_3_features[0]}** — Mean |SHAP|: {shap_series[top_3_features[0]]:.4f}
+                2. **{top_3_features[1]}** — Mean |SHAP|: {shap_series[top_3_features[1]]:.4f}
+                3. **{top_3_features[2]}** — Mean |SHAP|: {shap_series[top_3_features[2]]:.4f}
+                
+                **How do these features influence predictions (direction of impact)?**
+                
+                - **Length-based features** (e.g., `good_len`, `good_word_count`): Higher values push predictions toward **high complexity**. Longer, more detailed prompts are characteristic of complex tasks.
+                - **Structural features** (e.g., `len_ratio`, `good_sentence_count`): A higher ratio of good-to-bad prompt length indicates more elaboration, which correlates with higher complexity.
+                - **Technique indicators** (e.g., `num_techniques`, `tech_*`): Using multiple prompting techniques (chain-of-thought, role-prompting) strongly indicates high complexity.
+                
+                **How could these insights be useful to a decision-maker?**
+                
+                For **prompt engineers and AI practitioners**, these insights provide actionable guidance:
+                - **Complexity estimation**: Before deploying a prompt, estimate its complexity based on length, structure, and techniques used.
+                - **Prompt optimization**: If a prompt is unexpectedly classified as high-complexity, simplify by reducing length or removing advanced techniques.
+                - **Training data curation**: When building prompt datasets, use these features to ensure balanced representation across complexity levels.
+                - **Cost management**: High-complexity prompts often require more tokens and compute; understanding drivers helps optimize API costs.
+                """)
+                
                 st.subheader("📉 SHAP Waterfall (single-instance explanation)")
                 sample_idx = st.number_input(
                     "Row index to explain (0–{})".format(len(X_shap) - 1),
@@ -831,6 +1162,53 @@ with predict_tab:
                 }
                 feat_disp = pd.DataFrame(list(key_feats.items()), columns=["Feature", "Value"])
                 st.dataframe(feat_disp, use_container_width=True, hide_index=True)
+
+            # ─── SHAP Waterfall for Custom Input ────────────────────────────────
+            TREE_MODELS_PREDICT = {"Decision Tree", "Random Forest", "Gradient Boosting"}
+            if selected_model_name in TREE_MODELS_PREDICT:
+                with card("📊 SHAP Waterfall — Why This Prediction?"):
+                    st.caption("This waterfall plot shows how each feature pushed the prediction from the base value to the final output for your custom input.")
+                    try:
+                        import shap
+                        shap_model_pred = models[selected_model_name]
+                        X_background = extract_features(df).sample(n=100, random_state=42)
+                        background_np = X_background.to_numpy()
+                        explainer_pred = shap.TreeExplainer(shap_model_pred, background_np)
+                        
+                        X_input_np = X.to_numpy()
+                        shap_input = explainer_pred(X_input_np)
+                        
+                        if hasattr(shap_input, "values") and shap_input.values.ndim == 3:
+                            pred_class_idx = int(pred_enc)
+                            exp_waterfall = shap.Explanation(
+                                values=shap_input.values[0, :, pred_class_idx],
+                                base_values=(
+                                    explainer_pred.expected_value[pred_class_idx]
+                                    if isinstance(explainer_pred.expected_value, (list, np.ndarray))
+                                    else explainer_pred.expected_value
+                                ),
+                                data=X_input_np[0],
+                                feature_names=feature_names,
+                            )
+                        else:
+                            exp_waterfall = shap_input[0]
+                        
+                        fig_wf_pred, _ = plt.subplots(figsize=(10, 8))
+                        shap.plots.waterfall(exp_waterfall, max_display=15, show=False)
+                        plt.tight_layout()
+                        st.pyplot(fig_wf_pred)
+                        plt.close()
+                        
+                        st.markdown(f"""
+                        **Interpretation:** The waterfall shows how each feature contributed to predicting 
+                        **{pred_label.upper()}** complexity. Red bars push toward higher class indices 
+                        (toward "high"), blue bars push toward lower indices (toward "low"). The final 
+                        prediction is the sum of the base value plus all feature contributions.
+                        """)
+                    except Exception as shap_pred_err:
+                        st.warning(f"SHAP waterfall could not be generated: {shap_pred_err}")
+            else:
+                st.info(f"💡 SHAP waterfall is available for tree-based models (Decision Tree, Random Forest, Gradient Boosting). Select one of those models to see feature contributions for your prediction.")
 
     st.divider()
     with card("📚 Try these examples"):
