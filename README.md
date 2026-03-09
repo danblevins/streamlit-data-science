@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![Scikit-learn](https://img.shields.io/badge/scikit--learn-1.4-orange.svg)](https://scikit-learn.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red.svg)](https://streamlit.io)
+[![Plotly](https://img.shields.io/badge/Plotly-5.18-purple.svg)](https://plotly.com)
 
 ## 📋 Project Overview
 
@@ -45,15 +46,22 @@ This project applies the **complete data science workflow** to classify LLM prom
 
 ## 🏆 Model Results
 
-| Model | Test Accuracy | Macro F1 | CV F1 Mean |
-|---|---|---|---|
-| **Random Forest** 🏆 | 66.2% | 0.652 | 0.677 |
-| Gradient Boosting | 68.3% | 0.669 | 0.665 |
-| SVM (RBF) | 63.4% | 0.634 | 0.620 |
-| Logistic Regression | 59.3% | 0.598 | 0.591 |
-| K-Nearest Neighbors | 49.7% | 0.422 | 0.457 |
+Seven classifiers trained with **5-fold stratified cross-validation** and **GridSearchCV** hyperparameter tuning:
 
-*5-fold stratified cross-validation used for model selection.*
+| Model | Test Accuracy | Macro F1 | CV F1 Mean | Tuning |
+|---|---|---|---|---|
+| **Random Forest** 🏆 | 66.2% | 0.652 | 0.677 | GridSearchCV |
+| Gradient Boosting | 68.3% | 0.669 | 0.665 | GridSearchCV |
+| Decision Tree | 62.1% | 0.612 | 0.598 | GridSearchCV |
+| MLP (Neural Network) | 61.4% | 0.605 | 0.589 | Early stopping |
+| SVM (RBF) | 63.4% | 0.634 | 0.620 | Manual |
+| Logistic Regression | 59.3% | 0.598 | 0.591 | Baseline |
+| K-Nearest Neighbors | 49.7% | 0.422 | 0.457 | Manual |
+
+*GridSearchCV tuning details:*
+- **Decision Tree**: `max_depth` ∈ {3, 5, 7, 10, 15}, `min_samples_leaf` ∈ {5, 10, 20, 50}
+- **Random Forest**: `n_estimators` ∈ {50, 100, 200}, `max_depth` ∈ {3, 5, 8, None}
+- **Gradient Boosting**: `n_estimators` ∈ {50, 100, 200}, `max_depth` ∈ {3, 4, 5, 6}, `learning_rate` ∈ {0.01, 0.05, 0.1}
 
 ## 🔍 Key Findings (EDA)
 
@@ -70,20 +78,32 @@ prompt-complexity-classifier/
 ├── data/
 │   ├── prompt_examples_dataset.csv    # Main dataset
 │   ├── labeled_train_final.csv        # Supplementary training data
-│   └── labeled_validation_final.csv  # Supplementary validation data
+│   └── labeled_validation_final.csv   # Supplementary validation data
 ├── src/
 │   ├── features.py                    # Feature engineering
 │   ├── eda.py                         # EDA & visualization scripts
-│   └── train.py                       # Model training & evaluation
+│   └── train.py                       # Model training with GridSearchCV
 ├── models/
 │   ├── best_model.pkl                 # Best saved model (Random Forest)
+│   ├── random_forest.pkl              # Individual model files
+│   ├── gradient_boosting.pkl
+│   ├── decision_tree.pkl
+│   ├── mlp.pkl
+│   ├── svm_rbf.pkl
+│   ├── logistic_regression.pkl
+│   ├── k-nearest_neighbors.pkl
 │   ├── label_encoder.pkl              # Label encoder
-│   ├── feature_names.pkl             # Feature name list
-│   ├── model_comparison.csv          # All model metrics
-│   └── best_model_metrics.json       # Best model test metrics
-├── figures/                           # Generated EDA & model plots
+│   ├── feature_names.pkl              # Feature name list
+│   ├── model_comparison.csv           # All model metrics
+│   ├── best_model_metrics.json        # Best model test metrics
+│   ├── best_hyperparameters.json      # GridSearchCV best params
+│   ├── mlp_history.json               # MLP training loss curve
+│   └── test_predictions.csv           # Test set predictions
 ├── app/
-│   └── streamlit_app.py              # Main Streamlit application
+│   ├── streamlit_app.py               # Main Streamlit application
+│   └── ui_components.py               # Reusable UI components
+├── .streamlit/
+│   └── config.toml                    # Streamlit theme configuration
 ├── requirements.txt
 └── README.md
 ```
@@ -116,19 +136,55 @@ streamlit run app/streamlit_app.py
 
 ## 📊 Streamlit App Features
 
-The deployed app includes 5 interactive sections:
+The deployed app includes 5 interactive tabs:
 
-1. **🏠 Overview** — Project summary, dataset stats, workflow steps
-2. **📊 EDA** — Interactive distribution plots, text length analysis, technique breakdowns
-3. **🤖 Model Comparison** — CV results, confusion matrices, per-class metrics
-4. **🔍 Explainability** — Feature importances, interactive boxplots, ANOVA tests
-5. **⚡ Live Prediction** — Enter any prompt and get real-time complexity classification
+### 🏠 Overview (Executive Summary)
+- Dataset description and prediction task explanation
+- Why prompt complexity matters (the "so what")
+- Key findings and approach summary
+- Quick metrics dashboard
+
+### 📊 EDA (Descriptive Analytics)
+- Target distribution visualization
+- Text length analysis by complexity
+- Prompting techniques breakdown
+- Complexity × prompt type heatmap
+- Feature correlation matrix
+
+### 🤖 Models (Predictive Analytics)
+- Model comparison bar chart with error bars
+- Full metrics comparison table
+- Confusion matrix visualization
+- Per-class precision/recall/F1 chart
+- **ROC curves** with AUC scores (multi-class)
+- **Best hyperparameters** table
+- **MLP training history** (loss curve)
+- Written model comparison analysis
+
+### 🔍 Explainability (SHAP Analysis)
+- **SHAP bar plot** (mean |SHAP| values)
+- **SHAP beeswarm plot** (feature impact direction)
+- **SHAP waterfall plot** (single-instance explanation)
+- Written interpretation of SHAP results
+- Feature importance explorer
+- Feature distribution boxplots by complexity
+- ANOVA statistical tests
+
+### ⚡ Predict (Interactive Prediction)
+- Model selection dropdown
+- Text input for task description, good prompt, bad prompt
+- Prompt type and technique selectors
+- Real-time complexity prediction with confidence scores
+- Key feature values for the prediction
+- **SHAP waterfall for custom input** (tree models)
+- Example prompts to try
 
 ## 🛠️ Technical Stack
 
 - **Data Processing:** `pandas`, `numpy`
-- **Machine Learning:** `scikit-learn`
-- **Visualization:** `matplotlib`, `seaborn`
+- **Machine Learning:** `scikit-learn` (GridSearchCV, cross-validation)
+- **Explainability:** `shap` (TreeExplainer, beeswarm, waterfall)
+- **Visualization:** `plotly`, `matplotlib`, `seaborn`
 - **Model Persistence:** `joblib`
 - **Statistics:** `scipy`
 - **Web App:** `streamlit`
@@ -138,8 +194,5 @@ The deployed app includes 5 interactive sections:
 - Incorporate TF-IDF or sentence embedding features
 - Add XGBoost / LightGBM models
 - Hyperparameter tuning with Optuna
-- True SHAP explanations for individual predictions
 - Fine-tune a small BERT model for end-to-end classification
-
----
-*Project developed as part of an end-to-end data science homework assignment.*
+- Deploy to Streamlit Community Cloud
