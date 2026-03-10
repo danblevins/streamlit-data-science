@@ -9,6 +9,8 @@
 
 ## 📋 Project Overview
 
+LIVE PROJECT LINK: https://danblevins-ds.streamlit.app/
+
 This project applies the **complete data science workflow** to classify LLM prompts into three complexity levels: **low**, **medium**, and **high**. Understanding prompt complexity is valuable for:
 
 - Routing prompts to appropriately-sized language models
